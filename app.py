@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Servidor web con Flask - Diseño responsive para móviles
+Servidor web con Flask - Diseño responsive + IP real del cliente
 """
 
 from flask import Flask, request, jsonify, render_template_string
+from werkzeug.middleware.proxy_fix import ProxyFix
 import socket
 import platform
 
 app = Flask(__name__)
+
+# Necesario para obtener la IP real del cliente detrás de un proxy inverso
+# x_for=1 indica que confiamos en 1 nivel de proxy (Render, Cloudflare, etc.)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -188,12 +193,26 @@ def get_local_ip():
     except Exception:
         return socket.gethostbyname(socket.gethostname())
 
+def get_client_ip():
+    """
+    Obtiene la IP real del cliente.
+    Con ProxyFix activo, request.remote_addr ya devuelve la IP real
+    extraída del header X-Forwarded-For.
+    Como respaldo manual, también se lee el header directamente.
+    """
+    # ProxyFix ya lo resuelve, pero por si acaso se lee manualmente
+    forwarded_for = request.headers.get('X-Forwarded-For')
+    if forwarded_for:
+        # Puede venir como "IP_cliente, IP_proxy1, IP_proxy2"
+        return forwarded_for.split(',')[0].strip()
+    return request.remote_addr
+
 @app.route('/')
 def index():
     """Pagina principal con informacion"""
     hostname = socket.gethostname()
     local_ip = get_local_ip()
-    visitor_ip = request.remote_addr
+    visitor_ip = get_client_ip()
     os_info = f"{platform.system()} {platform.release()}"
 
     return render_template_string(HTML_TEMPLATE,
@@ -207,7 +226,7 @@ def api_info():
     """API REST que devuelve informacion en formato JSON"""
     hostname = socket.gethostname()
     local_ip = get_local_ip()
-    visitor_ip = request.remote_addr
+    visitor_ip = get_client_ip()
 
     return jsonify({
         'servidor': {
